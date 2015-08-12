@@ -4,22 +4,32 @@ using TriCAT;
 public class SampleRobot : IRobotPlugin
 {
 	// Name der Lerngruppe, die dieses Plugin entwickelt
-	public string GroupName { get { return "Test Group"; } }
-
-	// Liste mit Email Adressen der Authoren
-	public string[] Authors { get { return new string[] { "max@mustermann.de", "john@doe.com" }; } }
+	public string GroupName { get { return "Gruppe"; } }
+    /**********************/
+    // github.com/77adnap
+    /**********************/
+    // Liste mit Email Adressen der Authoren
+    public string[] Authors { get { return new string[] {"Florian Sorg"}; } }
 
 	// Versionsnummer des Plugins
 	public int VersionMajor { get { return 1; } }
 	public int VersionMinor { get { return 0; } }
+
+    enum RobotState {SearchingForStone, MoveToTargetArea, AllStonesFound, Init, Back};
+    RobotState currentRobotState;
+
+    public StoneData [] stones;
 
 	// Diese Interfaces bekommt man beim Start übergeben und sollte sie sich zur weiteren verwendung speichern.
 	private IApplication App;
 	private IRobot Robot;
 	private IPlayingField Field;
 
-	// Zum Speichern des aktuellen Steins
 	private StoneData currentStone = new StoneData();
+    private Vector currentStonePos;
+    private int stonesInTargetArea = 0;
+    private int back = 0;
+    private int push = 0;
 
 	/// <summary>
 	/// Called once, after the plugin has been loaded
@@ -34,7 +44,12 @@ public class SampleRobot : IRobotPlugin
 		Robot = robot;
 		Field = field;
 
+        currentRobotState = RobotState.Init;
+
 		App.LogMessage("Sample Robot initialized");
+
+       
+
 	}
 
 	/// <summary>
@@ -56,12 +71,160 @@ public class SampleRobot : IRobotPlugin
 		// z.B. im Kreis zu fahren:
 
 		// update local copy of the stone
-		if (currentStone.Id != -1) currentStone = Field.GetStoneById(currentStone.Id);
+       // if (currentStone.Id != -1)
+        //{
+          //  currentStone = Field.GetStoneById(currentStone.Id);
+        //}
 
-		Robot.GoForward();
-		Robot.TurnLeft();
+
+        if (currentRobotState == RobotState.Init)
+        {
+            SearchForNextStone();
+            currentRobotState = RobotState.SearchingForStone;
+        }
+        else if(currentRobotState == RobotState.SearchingForStone)
+        {
+            MoveToStone();
+        }
+        else if (currentRobotState == RobotState.MoveToTargetArea)
+        {
+            MoveToTargetArea(); 
+        }
+        else if (currentRobotState == RobotState.AllStonesFound)
+        {
+            App.LogMessage("All Stones Found");
+        }
+        else if (currentRobotState == RobotState.Back)
+        {
+            Back();
+        }
 	}
 
+    public void MoveToStone()
+    {
+        
+        Vector x = currentStonePos - Robot.Data.Position;
+        Vector y = x;
+        x.Normalize();
+        float result = Vector.Dot(Robot.Data.Right, x);
+
+        
+        if(Vector.Dot(Robot.Data.Forward, x) < 0 && y.Length() < 0.2 )
+        {
+            // Collect two stones at once (if two stones are available)
+            if (push < 1 && stonesInTargetArea < 3)
+            {
+                SearchForNextStone();
+                push++;
+            }
+            else
+            {
+                currentRobotState = RobotState.MoveToTargetArea;
+                // Reset so the next collection cycle also collects two stones (if possible)
+                push = 0;
+            }    
+        }
+        else
+        {
+            MoveRobot(result);
+        }
+
+
+    }
+
+    public void MoveToTargetArea()
+    {
+
+        Vector x = Field.TargetArea.Position - Robot.Data.Position;
+        Vector y = x;
+        x.Normalize();
+        float result = Vector.Dot(Robot.Data.Right, x);
+
+
+        if ( y.Length() < Field.TargetArea.Radius )
+        {
+            currentRobotState = RobotState.Back;  
+        }
+        else
+        {
+            MoveRobot(result);
+        } 
+    }
+
+
+    public void SearchForNextStone()
+    {
+        Vector y = new Vector(10000,10000,10000);
+        stonesInTargetArea = 0;
+        for (int i = 0; i < 4; i++)
+        {
+            StoneData stone = Field.GetStoneById(i);
+            Vector x = stone.Position - Field.TargetArea.Position;
+            Vector z = stone.Position - Robot.Data.Position;
+            App.LogMessage("Stone with id:" + i + " is " + z.Length() +" away");
+            // Dont collect a stone already in the target area
+            if (x.Length() > Field.TargetArea.Radius)
+            {
+                // Check if the stone is the closest to the robot and that it isnt already in the collection "basket"
+                if (z.Length() < y.Length() && z.Length()>0.2)
+                {
+                    y = z;
+                    currentStone = stone;
+                    currentStonePos = currentStone.Position;
+                    App.LogMessage("get id" + Field.GetStoneById(i).Id);
+                }
+            }
+            else
+            {
+                stonesInTargetArea++;
+            }
+        }
+        App.LogMessage("Next Stone is: " + currentStone.Id);     
+    }
+
+    public void Back()
+    {
+        if (back < 20)
+        {
+            Robot.GoBackward();
+            back++;
+        }
+        else
+        {
+            back = 0;
+            currentRobotState = RobotState.SearchingForStone;
+            SearchForNextStone();
+        }
+    }
+
+    public void MoveRobot(float result)
+    {
+        
+        
+        if (result > 0)
+        {
+            //rechts drehen
+            
+            Robot.TurnRight();
+            Robot.GoForward();
+        }
+
+        if (result < 0)
+        {
+            //links drehen
+            Robot.TurnLeft();
+            Robot.GoForward();
+          
+        }
+
+        if (result == 0)
+        {
+            Robot.GoForward();
+        }
+        
+
+    
+    }
 
 	/// <summary>
 	/// Called once before the plugin is unloaded
@@ -74,5 +237,6 @@ public class SampleRobot : IRobotPlugin
 		Robot = null;
 		Field = null;
 	}
-}
 
+
+}
